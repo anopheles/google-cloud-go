@@ -141,7 +141,6 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/api/support/bundler"
 	"google.golang.org/api/transport"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -206,28 +205,6 @@ func requestHook(ctx context.Context, req *http.Request) func(resp *http.Respons
 			span.Finish()
 		}
 	}
-}
-
-// EnableGRPCTracingDialOption enables tracing of requests that are sent over a
-// gRPC connection.
-// The functionality in gRPC that this relies on is currently experimental.
-var EnableGRPCTracingDialOption grpc.DialOption = grpc.WithUnaryInterceptor(grpc.UnaryClientInterceptor(grpcUnaryInterceptor))
-
-// EnableGRPCTracing enables tracing of requests for clients that use gRPC
-// connections.
-// The functionality in gRPC that this relies on is currently experimental.
-var EnableGRPCTracing option.ClientOption = option.WithGRPCDialOption(EnableGRPCTracingDialOption)
-
-func grpcUnaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	// TODO: also intercept streams.
-	span := FromContext(ctx).NewChild(method)
-	err := invoker(newGRPCContext(ctx, span), method, req, reply, cc, opts...)
-	if err != nil {
-		// TODO: standardize gRPC label names?
-		span.SetLabel("error", err.Error())
-	}
-	span.Finish()
-	return err
 }
 
 // nextSpanID returns a new span ID.  It will never return zero.
@@ -354,7 +331,7 @@ func (client *Client) SpanFromRequest(r *http.Request) *Span {
 // methods can still be called -- the Finish, FinishWait, and SetLabel methods
 // do nothing.  NewChild does nothing, and returns the same *Span. TraceID
 // works as usual.
-func (client *Client) SpanFromGRPCContext(ctx context.Context, name string) *Span {
+func (client *Client) spanFromGRPCContext(ctx context.Context, name string) *Span {
 	if client == nil {
 		return nil
 	}
@@ -418,6 +395,15 @@ func newGRPCContext(ctx context.Context, s *Span) context.Context {
 	}
 	return metadata.NewContext(ctx, md)
 }
+
+// FromGRPCContext returns a derived context and span compatible with gRPC
+// containing tracing information
+func (client *Client) FromGRPCContext(ctx context.Context, name string) (context.Context, *Span) {
+	span := client.spanFromGRPCContext(ctx, name)
+
+	return newGRPCContext(ctx, span), span
+}
+
 
 // FromContext returns the span contained in the context, or nil.
 func FromContext(ctx context.Context) *Span {
